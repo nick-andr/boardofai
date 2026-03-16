@@ -12,7 +12,13 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   title     String?
+  summary   String?  // Running conversation summary for model context
   prompts   Prompt[]
+
+  /// Canonical ordered list of model ids used for this conversation (e.g. ["openai","anthropic",...])
+  modelIds         String?
+  /// Models that have failed in this conversation and should no longer be called.
+  disabledModelIds String?
 
   @@map("conversations")
 }

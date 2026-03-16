@@ -19,7 +19,7 @@ export default function ModelSelection() {
       try {
         const response = await fetch('/api/models')
         if (response.ok) {
-          const data = await response.json()
+          const data = await response.json() as ModelConfig[]
           setModels(data)
           // Load saved selection from localStorage
           const saved = localStorage.getItem('selectedModels')

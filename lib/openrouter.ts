@@ -33,10 +33,18 @@ export interface ModelResult {
   error?: string
 }
 
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+
+/** Call model with messages. Single string is treated as one user message. */
 export async function callModel(
   modelId: string,
-  prompt: string
+  messagesOrPrompt: ChatMessage[] | string
 ): Promise<ModelResult> {
+  const messages: ChatMessage[] =
+    typeof messagesOrPrompt === 'string'
+      ? [{ role: 'user', content: messagesOrPrompt }]
+      : messagesOrPrompt
+
   const apiKey = process.env.OPENROUTER_API_KEY
 
   if (!apiKey) {
@@ -60,12 +68,7 @@ export async function callModel(
       },
       body: JSON.stringify({
         model: modelId,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        messages,
         temperature: 0.7,
         max_tokens: 2000,
       }),

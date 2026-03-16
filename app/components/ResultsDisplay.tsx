@@ -2,7 +2,6 @@
 
 import ModelResponse from './ModelResponse'
 import SummarySection from './SummarySection'
-import ViewpointsSection from './ViewpointsSection'
 
 interface Props {
   responses: Array<{
@@ -14,41 +13,37 @@ interface Props {
   }>
   summary?: {
     content: string
-    viewpoints: Array<{
-      title: string
-      description: string
-      responseIndices: number[]
-    }>
   } | null
-  viewpoints?: Array<{
-    title: string
-    description: string
-    responseIndices: number[]
-  }>
+  summaryLoading?: boolean
   isLoading?: boolean
 }
 
-export default function ResultsDisplay({ responses, summary, viewpoints, isLoading }: Props) {
+export default function ResultsDisplay({ responses, summary, summaryLoading, isLoading }: Props) {
   return (
-    <div className="space-y-6">
-      {/* Summary Section */}
-      {summary && (
-        <SummarySection summary={summary} />
-      )}
-      
-      {/* Viewpoints Section */}
-      {viewpoints && viewpoints.length > 0 && (
-        <ViewpointsSection viewpoints={viewpoints} responses={responses} />
-      )}
-      
-      {/* Individual Responses */}
-      <div className="space-y-4">
+    <div className="space-y-6 w-full">
+      {/* Summary Section - centered */}
+      {summary ? (
+        <div className="flex justify-center w-full">
+          <div className="max-w-3xl mx-auto">
+            <SummarySection summary={summary} />
+          </div>
+        </div>
+      ) : summaryLoading ? (
+        <div className="flex justify-center w-full">
+          <div className="max-w-3xl mx-auto text-center text-gray-500 text-sm py-2">
+            Generating summary…
+          </div>
+        </div>
+      ) : null}
+
+      {/* Individual model responses - left-aligned, full width */}
+      <div className="space-y-4 w-full">
         <h3 className="text-xl font-bold text-gray-900 mb-4">
-          Individual Responses
+          Responses
         </h3>
         {responses.map((response, index) => (
           <ModelResponse
-            key={index}
+            key={response.modelId ?? index}
             response={response}
             index={index}
           />

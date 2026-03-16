@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server'
-import { orchestrateModels } from '@/lib/orchestration'
 import { generateSummaryAndViewpoints } from '@/lib/summary'
 import { callModel } from '@/lib/openrouter'
-import { getEnabledModels, getModelById } from '@/lib/models'
+import { getEnabledModels, getModelsByIds } from '@/lib/models'
 import { prisma } from '@/lib/prisma'
+import { buildConversationMessages } from '@/lib/context'
 
 // Server-Sent Events stream for real-time updates
 export async function POST(request: NextRequest) {
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 
       try {
         const body = await request.json()
-        const { prompt, modelCount, conversationId } = body
+        const { prompt, modelCount, conversationId, selectedModelIds, powerMode } = body
 
         if (!prompt || typeof prompt !== 'string') {
           send({ type: 'error', message: 'Prompt is required' })
@@ -25,35 +25,102 @@ export async function POST(request: NextRequest) {
           return
         }
 
-        if (!modelCount || modelCount < 1) {
-          send({ type: 'error', message: 'Model count must be at least 1' })
-          controller.close()
-          return
-        }
-
-        // Get enabled models
+        const count = Math.min(7, Math.max(1, parseInt(modelCount, 10) || 1))
         const enabledModels = getEnabledModels()
-        const selectedModels = enabledModels.slice(0, parseInt(modelCount, 10))
-        const modelIds = selectedModels.map((m) => m.id)
 
-        // Create or get conversation
-        let conversationIdFinal = conversationId
-        if (!conversationIdFinal) {
+        // Create or get conversation: reuse only if valid id and conversation exists
+        let conversationIdFinal: string
+        let baseModelIds: string[] | null = null
+        let disabledModelIds: string[] = []
+        const incomingId = typeof body.conversationId === 'string' && body.conversationId.trim()
+          ? body.conversationId.trim()
+          : null
+
+        if (incomingId) {
+          const existing = await prisma.conversation.findUnique({
+            where: { id: incomingId },
+          })
+          if (existing) {
+            conversationIdFinal = existing.id
+            // Load canonical model set and disabled models for this conversation
+            if (existing.modelIds) {
+              try {
+                baseModelIds = JSON.parse(existing.modelIds)
+              } catch {
+                baseModelIds = null
+              }
+            }
+            if (existing.disabledModelIds) {
+              try {
+                disabledModelIds = JSON.parse(existing.disabledModelIds)
+              } catch {
+                disabledModelIds = []
+              }
+            }
+            await prisma.conversation.update({
+              where: { id: conversationIdFinal },
+              data: { updatedAt: new Date() },
+            })
+          } else {
+            const conversation = await prisma.conversation.create({
+              data: { title: prompt.substring(0, 100) },
+            })
+            conversationIdFinal = conversation.id
+            send({ type: 'conversation', conversationId: conversationIdFinal })
+          }
+        } else {
           const conversation = await prisma.conversation.create({
-            data: {
-              title: prompt.substring(0, 100),
-            },
+            data: { title: prompt.substring(0, 100) },
           })
           conversationIdFinal = conversation.id
           send({ type: 'conversation', conversationId: conversationIdFinal })
         }
+
+        // Resolve canonical model ids for this conversation.
+        // 1) If baseModelIds was already stored on the conversation, use it.
+        // 2) Otherwise, derive from client selection / defaults once and persist.
+        let selectedModelsForTurn: typeof enabledModels
+        if (!baseModelIds) {
+          // Use selectedModelIds from client when provided; otherwise first N from default order
+          if (Array.isArray(selectedModelIds) && selectedModelIds.length > 0) {
+            selectedModelsForTurn = getModelsByIds(selectedModelIds)
+          } else {
+            selectedModelsForTurn = enabledModels.slice(0, count)
+          }
+          if (selectedModelsForTurn.length === 0) {
+            send({ type: 'error', message: 'At least one model must be selected' })
+            controller.close()
+            return
+          }
+          baseModelIds = selectedModelsForTurn.map((m) => m.id)
+          // Persist canonical model set for this conversation
+          await prisma.conversation.update({
+            where: { id: conversationIdFinal },
+            data: { modelIds: JSON.stringify(baseModelIds) },
+          })
+        }
+
+        // Apply per-conversation disabled models: silently drop them for this and future turns.
+        const effectiveModelIds = (baseModelIds || []).filter(
+          (id) => !disabledModelIds.includes(id)
+        )
+        selectedModelsForTurn = getModelsByIds(effectiveModelIds)
+        if (selectedModelsForTurn.length === 0) {
+          send({
+            type: 'error',
+            message: 'All models for this conversation are currently disabled due to errors',
+          })
+          controller.close()
+          return
+        }
+        const modelIds = selectedModelsForTurn.map((m) => m.id)
 
         // Create prompt record
         const promptRecord = await prisma.prompt.create({
           data: {
             conversationId: conversationIdFinal,
             content: prompt,
-            modelCount: parseInt(modelCount, 10),
+            modelCount: selectedModelsForTurn.length,
           },
         })
 
@@ -61,7 +128,7 @@ export async function POST(request: NextRequest) {
 
         // Create pending response records
         const responseRecords = await Promise.all(
-          selectedModels.map((model) =>
+          selectedModelsForTurn.map((model) =>
             prisma.modelResponse.create({
               data: {
                 promptId: promptRecord.id,
@@ -77,15 +144,19 @@ export async function POST(request: NextRequest) {
         // Send initial state
         send({
           type: 'models_started',
-          models: selectedModels.map((m) => ({
+          models: selectedModelsForTurn.map((m) => ({
             id: m.id,
             name: m.name,
             status: 'pending',
           })),
         })
 
-        // Call models in parallel
-        const promises = selectedModels.map(async (model, index) => {
+        // Call models in parallel (with conversation context when continuing)
+        const messages = incomingId
+          ? await buildConversationMessages(conversationIdFinal, prompt)
+          : [{ role: 'user' as const, content: prompt }]
+
+        const promises = selectedModelsForTurn.map(async (model, index) => {
           const record = responseRecords[index]
 
           try {
@@ -95,7 +166,8 @@ export async function POST(request: NextRequest) {
               modelName: model.name,
             })
 
-            const result = await callModel(model.id, prompt)
+            const targetModelId = powerMode ? model.powerModelId : model.fastModelId
+            const result = await callModel(targetModelId, messages)
 
             // Update database
             await prisma.modelResponse.update({
@@ -129,6 +201,20 @@ export async function POST(request: NextRequest) {
               },
             })
 
+            // Silently disable this model for the rest of the conversation.
+            try {
+              const updatedDisabled = Array.from(
+                new Set([...disabledModelIds, model.id])
+              )
+              disabledModelIds = updatedDisabled
+              await prisma.conversation.update({
+                where: { id: conversationIdFinal },
+                data: { disabledModelIds: JSON.stringify(updatedDisabled) },
+              })
+            } catch (e) {
+              console.error('Failed to update disabledModelIds for conversation:', e)
+            }
+
             send({
               type: 'model_failed',
               modelId: model.id,
@@ -148,20 +234,21 @@ export async function POST(request: NextRequest) {
 
         await Promise.all(promises)
 
-        // Generate summary and viewpoints
-        send({ type: 'generating_summary' })
+        // Always generate and persist summary first (so it's saved even if client disconnected)
         try {
           await generateSummaryAndViewpoints(promptRecord.id)
-          send({ type: 'summary_completed', promptId: promptRecord.id })
         } catch (error) {
           console.error('Error generating summary:', error)
-          send({
-            type: 'summary_error',
-            error: error instanceof Error ? error.message : 'Unknown error',
-          })
         }
 
-        send({ type: 'complete', promptId: promptRecord.id })
+        // Then try to notify client (ignore if stream already closed)
+        try {
+          send({ type: 'generating_summary' })
+          send({ type: 'summary_completed', promptId: promptRecord.id })
+          send({ type: 'complete', promptId: promptRecord.id })
+        } catch (_) {
+          /* client disconnected; summary already persisted */
+        }
         controller.close()
       } catch (error) {
         send({
