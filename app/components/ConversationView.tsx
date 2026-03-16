@@ -8,9 +8,18 @@ import type { Turn } from './ChatInterface'
 interface Props {
   conversationId: string
   initialTurns: Turn[]
+  parentId?: string | null
+  boundModelId?: string | null
+  parentTitle?: string | null
 }
 
-export default function ConversationView({ conversationId, initialTurns }: Props) {
+export default function ConversationView({
+  conversationId,
+  initialTurns,
+  parentId,
+  boundModelId,
+  parentTitle,
+}: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   useEffect(() => {
@@ -37,6 +46,9 @@ export default function ConversationView({ conversationId, initialTurns }: Props
         <ChatInterface
           initialConversationId={conversationId}
           initialTurns={initialTurns}
+          parentConversationId={parentId ?? null}
+          boundModelId={boundModelId ?? null}
+          parentTitle={parentTitle ?? null}
         />
       </main>
     </div>

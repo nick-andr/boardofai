@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
         let conversationIdFinal: string
         let baseModelIds: string[] | null = null
         let disabledModelIds: string[] = []
+        let isChildConversation = false
         const incomingId = typeof body.conversationId === 'string' && body.conversationId.trim()
           ? body.conversationId.trim()
           : null
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
           })
           if (existing) {
             conversationIdFinal = existing.id
+            if (existing.parentId != null) isChildConversation = true
             // Load canonical model set and disabled models for this conversation
             if (existing.modelIds) {
               try {
@@ -234,20 +236,24 @@ export async function POST(request: NextRequest) {
 
         await Promise.all(promises)
 
-        // Always generate and persist summary first (so it's saved even if client disconnected)
-        try {
-          await generateSummaryAndViewpoints(promptRecord.id)
-        } catch (error) {
-          console.error('Error generating summary:', error)
+        // Skip summary for child (1:1) threads and for single-model board conversations
+        const skipSummary = isChildConversation || modelIds.length === 1
+        if (!skipSummary) {
+          try {
+            await generateSummaryAndViewpoints(promptRecord.id)
+          } catch (error) {
+            console.error('Error generating summary:', error)
+          }
         }
 
-        // Then try to notify client (ignore if stream already closed)
         try {
-          send({ type: 'generating_summary' })
-          send({ type: 'summary_completed', promptId: promptRecord.id })
+          if (!skipSummary) {
+            send({ type: 'generating_summary' })
+            send({ type: 'summary_completed', promptId: promptRecord.id })
+          }
           send({ type: 'complete', promptId: promptRecord.id })
         } catch (_) {
-          /* client disconnected; summary already persisted */
+          /* client disconnected */
         }
         controller.close()
       } catch (error) {

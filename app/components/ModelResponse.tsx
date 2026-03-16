@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { getModelLogoPath } from '@/lib/logo'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
@@ -78,6 +78,9 @@ interface Props {
     error?: string
   }
   index: number
+  onTalkOneToOne?: () => void
+  /** When true (e.g. child/1:1 thread): no expand/collapse, content always full. */
+  alwaysExpanded?: boolean
 }
 
 const markdownComponents = {
@@ -125,17 +128,51 @@ const markdownComponents = {
   del: ({ children }: { children?: React.ReactNode }) => <del className="text-gray-500">{children}</del>,
 }
 
-export default function ModelResponse({ response }: Props) {
+const COLLAPSED_MAX_HEIGHT = '0px'
+const EXPANDED_MAX_HEIGHT = '2000px' // large enough for any response; allows CSS transition
+
+export default function ModelResponse({ response, onTalkOneToOne, alwaysExpanded = false }: Props) {
+  const [expanded, setExpanded] = useState(false)
+  const isExpanded = alwaysExpanded || expanded
+
   useEffect(() => {
     if (!response.success && response.error) {
       console.warn(`[Board] ${response.modelName} error:`, response.error)
     }
   }, [response.success, response.error, response.modelName])
 
+  const buttonClass =
+    'inline-flex items-center justify-center size-9 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-400 active:bg-gray-100 transition-colors'
+
+  const actionButtons = response.success && !alwaysExpanded && (
+    <div className="flex items-center gap-2 flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className={buttonClass}
+        title={expanded ? 'Collapse' : 'Expand'}
+        aria-label={expanded ? 'Collapse' : 'Expand'}
+      >
+        {expanded ? '˄' : '˅'}
+      </button>
+      {onTalkOneToOne && (
+        <button
+          type="button"
+          onClick={onTalkOneToOne}
+          className={buttonClass}
+          title="Talk to this model separately"
+          aria-label="Talk to this model separately"
+        >
+          {'>'}
+        </button>
+      )}
+    </div>
+  )
+
   return (
     <div className="border rounded-lg p-4 bg-white shadow-sm">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
             response.success
               ? 'bg-green-500'
@@ -146,22 +183,29 @@ export default function ModelResponse({ response }: Props) {
             alt=""
             className="w-6 h-6 object-contain flex-shrink-0"
           />
-          <h4 className="font-semibold text-gray-900">
+          <h4 className="font-semibold text-gray-900 truncate">
             {response.modelName}
           </h4>
         </div>
+        {!isExpanded && actionButtons}
       </div>
 
       {response.success ? (
-        <div className="mt-3 text-gray-700 prose prose-sm max-w-none [&_.katex]:text-base [&_.katex-display]:text-lg [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[[rehypeKatex, { strict: 'ignore' }], [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-            components={markdownComponents}
+        <>
+          <div
+            className="mt-3 text-gray-700 prose prose-sm max-w-none [&_.katex]:text-base [&_.katex-display]:text-lg [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden overflow-hidden transition-[max-height] duration-300 ease-in-out"
+            style={{ maxHeight: isExpanded ? EXPANDED_MAX_HEIGHT : COLLAPSED_MAX_HEIGHT }}
           >
-            {wrapBareLatex(response.content)}
-          </ReactMarkdown>
-        </div>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[[rehypeKatex, { strict: 'ignore' }], [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+              components={markdownComponents}
+            >
+              {wrapBareLatex(response.content)}
+            </ReactMarkdown>
+          </div>
+          {isExpanded && <div className="mt-3 flex items-center justify-end">{actionButtons}</div>}
+        </>
       ) : (
         <div className="mt-3">
           <p className="text-red-600" data-error={response.error ?? undefined}>

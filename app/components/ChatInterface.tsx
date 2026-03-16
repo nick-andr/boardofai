@@ -45,6 +45,12 @@ interface ChatInterfaceProps {
   initialPromptContent?: string
   initialResponses?: ModelResult[]
   initialSummary?: Summary | null
+  /** For nested conversations: id of the parent board conversation, if any. */
+  parentConversationId?: string | null
+  /** For 1:1 child conversations: the bound model id, if any. */
+  boundModelId?: string | null
+  /** Optional parent title for breadcrumbs. */
+  parentTitle?: string | null
 }
 
 function defaultTurnsFromLegacy(
@@ -72,6 +78,9 @@ export default function ChatInterface({
   initialPromptContent,
   initialResponses,
   initialSummary,
+  parentConversationId = null,
+  boundModelId = null,
+  parentTitle = null,
 }: ChatInterfaceProps = {}) {
   const initialTurns =
     initialTurnsProp ?? defaultTurnsFromLegacy(initialPromptContent, initialResponses, initialSummary)
@@ -150,9 +159,10 @@ export default function ChatInterface({
     scrollOnNextRenderRef.current = false
   }, [turns])
 
-  // Backfill missing summaries when loading a conversation (e.g. after closing tab during stream)
+  // Backfill missing summaries when loading a conversation (e.g. after closing tab during stream). Skip in child threads.
   const requestedSummaryRef = useRef<Set<string>>(new Set())
   useEffect(() => {
+    if (boundModelId) return
     turns.forEach((turn, index) => {
       if (!ensureTurnHasPromptId(turn) || turn.summary != null || turn.responses.length === 0) return
       if (requestedSummaryRef.current.has(turn.promptId)) return
@@ -181,7 +191,7 @@ export default function ChatInterface({
           })
         })
     })
-  }, [turns])
+  }, [turns, boundModelId])
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -313,6 +323,23 @@ export default function ChatInterface({
 
   const hasReplies = turns.length > 0
 
+  const isBoardConversation = !boundModelId
+
+  // Precompute, for board conversations only, the last turn index where each model responded successfully.
+  const lastTurnIndexByModel = isBoardConversation
+    ? (() => {
+        const map = new Map<string, number>()
+        turns.forEach((turn, index) => {
+          turn.responses.forEach((r) => {
+            if (r.success) {
+              map.set(r.modelId, index)
+            }
+          })
+        })
+        return map
+      })()
+    : new Map<string, number>()
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 flex flex-col">
@@ -368,36 +395,79 @@ export default function ChatInterface({
           </div>
         ) : (
           <div className="w-full min-h-0 flex flex-col space-y-8 px-4">
-            {turns.map((turn, index) => (
-              <div key={index} className="w-full flex flex-col space-y-4 items-end">
-                <div className={`inline-flex bg-gray-300 border border-gray-500 rounded-xl p-4 max-w-2xl break-words self-end ${index > 0 ? 'mt-4' : ''}`}>
-                  <p className="text-gray-900 whitespace-pre-wrap">{turn.prompt}</p>
+            {turns.map((turn, index) => {
+              // For this turn, compute per-model Talk 1:1 handlers (board conversations only).
+              const talkHandlersForTurn: Record<string, () => void> = {}
+              if (isBoardConversation) {
+                turn.responses.forEach((r) => {
+                  if (
+                    r.success &&
+                    lastTurnIndexByModel.get(r.modelId) === index
+                  ) {
+                    talkHandlersForTurn[r.modelId] = async () => {
+                      try {
+                        const res = await fetch(
+                          `/api/conversations/${conversationIdRef.current}/continue-one-to-one`,
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ modelId: r.modelId }),
+                          },
+                        )
+                        if (!res.ok) {
+                          console.error('Failed to create 1:1 conversation', await res.text())
+                          return
+                        }
+                        const data = await res.json()
+                        if (data.childId) {
+                          window.open(`/chat/${data.childId}`, '_blank')
+                        }
+                      } catch (err) {
+                        console.error('Error creating 1:1 conversation', err)
+                      }
+                    }
+                  }
+                })
+              }
+
+              return (
+                <div key={index} className="w-full flex flex-col space-y-4 items-end">
+                  <div className={`inline-flex bg-gray-300 border border-gray-500 rounded-xl p-4 max-w-2xl break-words self-end ${index > 0 ? 'mt-4' : ''}`}>
+                    <p className="text-gray-900 whitespace-pre-wrap">{turn.prompt}</p>
+                  </div>
+                  {index === turns.length - 1 && isSubmitting && (
+                    <LoadingAnimation
+                      models={waitingForModels.length > 0 ? waitingForModels : undefined}
+                      modelCount={waitingForModels.length || 3}
+                      completedIds={new Set(turn.responses.map((r) => r.modelId))}
+                      allModelsDone={
+                        waitingForModels.length > 0 &&
+                        turn.responses.length >= waitingForModels.length
+                      }
+                    />
+                  )}
+                  {(!isSubmitting || index < turns.length - 1) && turn.responses.length > 0 && (() => {
+                    const compactMode = !!boundModelId || (isBoardConversation && turn.responses.length === 1)
+                    return (
+                      <ResultsDisplay
+                        responses={turn.responses}
+                        summary={turn.summary}
+                        summaryLoading={
+                          !compactMode &&
+                          !!turn.promptId &&
+                          turn.summary == null &&
+                          summaryLoadingPromptIds.has(turn.promptId)
+                        }
+                        isLoading={false}
+                        talkOneToOneHandlersByModelId={compactMode ? undefined : talkHandlersForTurn}
+                        alwaysExpanded={compactMode}
+                        compactMode={compactMode}
+                      />
+                    )
+                  })()}
                 </div>
-                {index === turns.length - 1 && isSubmitting && (
-                  <LoadingAnimation
-                    models={waitingForModels.length > 0 ? waitingForModels : undefined}
-                    modelCount={waitingForModels.length || 3}
-                    completedIds={new Set(turn.responses.map((r) => r.modelId))}
-                    allModelsDone={
-                      waitingForModels.length > 0 &&
-                      turn.responses.length >= waitingForModels.length
-                    }
-                  />
-                )}
-                {(!isSubmitting || index < turns.length - 1) && turn.responses.length > 0 && (
-                  <ResultsDisplay
-                    responses={turn.responses}
-                    summary={turn.summary}
-                    summaryLoading={
-                      !!turn.promptId &&
-                      turn.summary == null &&
-                      summaryLoadingPromptIds.has(turn.promptId)
-                    }
-                    isLoading={false}
-                  />
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
         <div ref={messagesEndRef} />

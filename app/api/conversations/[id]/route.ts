@@ -7,6 +7,12 @@ type RouteContext = { params: Promise<{ id: string }> }
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
+
+    // If this is a parent conversation, delete its children first.
+    await prisma.conversation.deleteMany({
+      where: { parentId: id },
+    })
+
     await prisma.conversation.delete({
       where: { id },
     })

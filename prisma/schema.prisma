@@ -20,6 +20,15 @@ model Conversation {
   /// Models that have failed in this conversation and should no longer be called.
   disabledModelIds String?
 
+  /// Parent/child relationship for nested conversations.
+  /// Top-level "board" conversations have parentId = null and modelId = null.
+  parentId   String?
+  parent     Conversation?  @relation("ConversationParent", fields: [parentId], references: [id])
+  children   Conversation[] @relation("ConversationParent")
+
+  /// For 1:1 child conversations, the bound model id (e.g. "openai", "anthropic").
+  modelId    String?
+
   @@map("conversations")
 }
 

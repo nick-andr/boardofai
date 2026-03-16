@@ -7,6 +7,9 @@ interface ConversationItem {
   id: string
   title: string | null
   updatedAt: string | Date
+  modelId?: string | null
+  parentId?: string | null
+  children?: ConversationItem[]
 }
 
 export default function ChatHistory() {
@@ -170,6 +173,27 @@ export default function ChatHistory() {
                 )}
               </div>
             </Link>
+            {conversation.children && conversation.children.length > 0 && (
+              <ul className="mt-1 ml-4 space-y-1">
+                {conversation.children.map((child) => (
+                  <li key={child.id}>
+                    <Link
+                      href={`/chat/${child.id}`}
+                      className="group flex items-center justify-between rounded px-2 py-1 text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
+                    >
+                      <div className="flex-1 min-w-0 px-1">
+                        <div className="truncate text-sm">
+                          {child.title || 'Talk 1:1'}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {new Date(child.updatedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>

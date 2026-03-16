@@ -18,6 +18,7 @@ export default async function ConversationPage({
           summary: true,
         },
       },
+      parent: true,
     },
   })
 
@@ -42,6 +43,9 @@ export default async function ConversationPage({
     <ConversationView
       conversationId={conversation.id}
       initialTurns={initialTurns}
+      parentId={conversation.parentId}
+      boundModelId={conversation.modelId}
+      parentTitle={conversation.parent?.title ?? null}
     />
   )
 }
