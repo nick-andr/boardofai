@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { generateSummaryAndViewpoints } from '@/lib/summary'
+import { generateSummaryAndStances } from '@/lib/summary'
 import { callModel } from '@/lib/openrouter'
 import { getEnabledModels, getModelsByIds } from '@/lib/models'
 import { prisma } from '@/lib/prisma'
@@ -238,19 +238,18 @@ export async function POST(request: NextRequest) {
 
         // Skip summary for child (1:1) threads and for single-model board conversations
         const skipSummary = isChildConversation || modelIds.length === 1
+
         if (!skipSummary) {
           try {
-            await generateSummaryAndViewpoints(promptRecord.id)
+            send({ type: 'generating_summary' })
+            await generateSummaryAndStances(promptRecord.id)
+            send({ type: 'summary_completed', promptId: promptRecord.id })
           } catch (error) {
-            console.error('Error generating summary:', error)
+            console.error('Error generating summary or stances:', error)
           }
         }
 
         try {
-          if (!skipSummary) {
-            send({ type: 'generating_summary' })
-            send({ type: 'summary_completed', promptId: promptRecord.id })
-          }
           send({ type: 'complete', promptId: promptRecord.id })
         } catch (_) {
           /* client disconnected */

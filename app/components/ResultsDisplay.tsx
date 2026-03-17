@@ -13,6 +13,7 @@ interface Props {
   }>
   summary?: {
     content: string
+    stances?: Record<string, string>
   } | null
   summaryLoading?: boolean
   isLoading?: boolean

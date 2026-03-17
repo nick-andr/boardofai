@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown'
 interface Props {
   summary: {
     content: string
+    stances?: Record<string, string>
   }
 }
 
@@ -90,6 +91,30 @@ const markdownComponents = {
 }
 
 export default function SummarySection({ summary }: Props) {
+  const stances = summary.stances
+  const stanceEntries = stances ? Object.entries(stances) : []
+  const stanceApplicable = stanceEntries.length > 0
+
+  function canonicaliseStance(raw: string): string {
+    const s = raw.trim().toLowerCase()
+    if (s.includes('no clear') || s.includes("we don't know") || s.includes('unclear')) {
+      return 'No clear winner / we don’t know'
+    }
+    if (s.includes('depends')) return 'It depends'
+    if (s === 'read full answer') return 'Read full answer'
+    return raw.trim()
+  }
+
+  const stanceBuckets = new Map<string, string[]>()
+  if (stanceApplicable) {
+    for (const [modelId, raw] of stanceEntries) {
+      const label = canonicaliseStance(raw)
+      const list = stanceBuckets.get(label) ?? []
+      list.push(modelId)
+      stanceBuckets.set(label, list)
+    }
+  }
+
   const paragraphs = summary.content.split(/\n\n+/).filter(Boolean)
 
   return (
@@ -99,6 +124,34 @@ export default function SummarySection({ summary }: Props) {
       </h3>
       <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-6 mb-6">
         <div className="space-y-4">
+          {stanceApplicable && (
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Panel Vote</h4>
+              <div className="space-y-2">
+                {Array.from(stanceBuckets.entries()).map(([label, modelIds], idx) => (
+                  <div key={idx} className="flex gap-3 items-center">
+                    <span className="text-xs text-gray-500 tabular-nums flex-shrink-0">
+                      ({modelIds.length}/{stanceEntries.length})
+                    </span>
+                    <div className="flex -space-x-2 flex-shrink-0">
+                      {modelIds.map((modelId) => (
+                        <img
+                          key={modelId}
+                          src={getModelLogoPath(modelId)}
+                          alt=""
+                          className="w-6 h-6 rounded-full border border-white bg-white object-contain"
+                        />
+                      ))}
+                    </div>
+                    <span className="text-gray-800 font-medium">{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <hr className="my-4 border-gray-200" />
+            </div>
+          )}
+
           {paragraphs.map((para, i) => {
             const cluster = parseClusterLine(para)
             if (cluster) {

@@ -1,6 +1,8 @@
 // OpenRouter API integration
 // This module handles all LLM interactions via OpenRouter
 
+import type { ModelResult } from './types'
+
 export interface OpenRouterResponse {
   id: string
   model: string
@@ -25,20 +27,13 @@ export interface ModelRequest {
   prompt: string
 }
 
-export interface ModelResult {
-  modelId: string
-  modelName: string
-  content: string
-  success: boolean
-  error?: string
-}
-
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
 /** Call model with messages. Single string is treated as one user message. */
 export async function callModel(
   modelId: string,
-  messagesOrPrompt: ChatMessage[] | string
+  messagesOrPrompt: ChatMessage[] | string,
+  options?: { temperature?: number; maxTokens?: number }
 ): Promise<ModelResult> {
   const messages: ChatMessage[] =
     typeof messagesOrPrompt === 'string'
@@ -69,8 +64,8 @@ export async function callModel(
       body: JSON.stringify({
         model: modelId,
         messages,
-        temperature: 0.7,
-        max_tokens: 2000,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens ?? 2000,
       }),
     })
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { orchestrateModels } from '@/lib/orchestration'
-import { generateSummaryAndViewpoints } from '@/lib/summary'
+import { generateSummaryAndStances } from '@/lib/summary'
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,11 +28,15 @@ export async function POST(request: NextRequest) {
       conversationId,
     })
 
-    // Generate summary and viewpoints asynchronously
-    // Don't wait for it to complete before returning
-    generateSummaryAndViewpoints(result.promptId).catch((error) => {
-      console.error('Error generating summary:', error)
-    })
+    // Generate summary and panel vote asynchronously with the unified orchestrator.
+    // Don't wait for it to complete before returning.
+    ;(async () => {
+      try {
+        await generateSummaryAndStances(result.promptId)
+      } catch (error) {
+        console.error('Error generating summary or stances:', error)
+      }
+    })()
 
     return NextResponse.json(result)
   } catch (error) {

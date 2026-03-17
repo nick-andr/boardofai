@@ -81,6 +81,7 @@ model Summary {
   content   String
   createdAt DateTime @default(now())
   prompt    Prompt   @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  stances   Json?
 
   @@map("summaries")
 }

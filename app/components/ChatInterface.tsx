@@ -2,32 +2,20 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { type ModelConfig } from '@/lib/models'
+import type { ModelResult } from '@/lib/types'
 import ChatInput from './ChatInput'
 import LoadingAnimation from './LoadingAnimation'
 import ResultsDisplay from './ResultsDisplay'
 import SessionSetup from './SessionSetup'
 
-interface ModelResult {
-  modelId: string
-  modelName: string
-  content: string
-  success: boolean
-  error?: string
-}
-
 interface Summary {
   content: string
+  stances?: Record<string, string>
   viewpoints?: Array<{
     title: string
     description: string
     responseIndices: number[]
   }>
-}
-
-interface Viewpoint {
-  title: string
-  description: string
-  responseIndices: number[]
 }
 
 export interface Turn {
@@ -88,7 +76,6 @@ export default function ChatInterface({
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [turns, setTurns] = useState<Turn[]>(initialTurns)
-  const [viewpoints, setViewpoints] = useState<Viewpoint[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
   const [expertCount, setExpertCount] = useState(3)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -164,20 +151,33 @@ export default function ChatInterface({
   useEffect(() => {
     if (boundModelId) return
     turns.forEach((turn, index) => {
-      if (!ensureTurnHasPromptId(turn) || turn.summary != null || turn.responses.length === 0) return
+      if (!ensureTurnHasPromptId(turn) || turn.responses.length === 0) return
+      // Never backfill the currently streaming turn; let the server completion path handle it.
+      const isLastTurn = index === turns.length - 1
+      if (isLastTurn && isSubmitting) return
+      // If this turn already has stances, no need to request again.
+      if (turn.summary && turn.summary.stances) return
       if (requestedSummaryRef.current.has(turn.promptId)) return
       requestedSummaryRef.current.add(turn.promptId)
-      setSummaryLoadingPromptIds((prev) => new Set(prev).add(turn.promptId))
       const promptId = turn.promptId
+      setSummaryLoadingPromptIds((prev) => new Set(prev).add(promptId))
       fetch(`/api/prompts/${promptId}`, { method: 'POST' })
         .then((res) => (res.ok ? res.json() : { summary: null }))
-        .then((data: { summary?: { content: string } | null }) => {
+        .then((data: { summary?: { content: string; stances?: Record<string, string> | null } | null }) => {
           setTurns((prev) => {
             const next = [...prev]
             const i = next.findIndex((t) => t.promptId === promptId)
             if (i !== -1) {
               const t = next[i]
-              next[i] = { ...t, summary: data.summary ? { content: data.summary.content } : null }
+              next[i] = {
+                ...t,
+                summary: data.summary
+                  ? {
+                      content: data.summary.content,
+                      stances: data.summary.stances ?? undefined,
+                    }
+                  : null,
+              }
             }
             return next
           })
@@ -191,7 +191,7 @@ export default function ChatInterface({
           })
         })
     })
-  }, [turns, boundModelId])
+  }, [turns, boundModelId, isSubmitting])
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -292,7 +292,9 @@ export default function ChatInterface({
                 return next
               })
             } else if (data.type === 'summary_completed' && data.promptId) {
-              const summaryRes = await fetch(`/api/prompts/${data.promptId}`)
+              const summaryRes = await fetch(`/api/prompts/${data.promptId}`, {
+                method: 'POST',
+              })
               if (summaryRes.ok) {
                 const promptData = await summaryRes.json()
                 setTurns((prev) => {
@@ -300,11 +302,15 @@ export default function ChatInterface({
                   const last = next[next.length - 1]
                   next[next.length - 1] = {
                     ...last,
-                    summary: promptData.summary ? { content: promptData.summary.content } : null,
+                    summary: promptData.summary
+                      ? {
+                          content: promptData.summary.content,
+                          stances: promptData.summary.stances ?? undefined,
+                        }
+                      : null,
                   }
                   return next
                 })
-                if (promptData.viewpoints) setViewpoints(promptData.viewpoints)
               }
             } else if (data.type === 'complete') {
               setIsSubmitting(false)

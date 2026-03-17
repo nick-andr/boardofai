@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { generateSummaryAndViewpoints } from '@/lib/summary'
+import { generateSummaryAndStances } from '@/lib/summary'
 
 /** POST: Ensure summary exists (e.g. after reconnect). Generates if missing. */
 export async function POST(
@@ -11,25 +11,52 @@ export async function POST(
     const { id } = await params
     const prompt = await prisma.prompt.findUnique({
       where: { id },
-      include: { summary: true, responses: { select: { status: true } } },
+      include: { summary: true, responses: { select: { status: true, modelId: true, modelName: true, content: true } } },
     })
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt not found' }, { status: 404 })
     }
-    const hasCompleted = prompt.responses.some((r) => r.status === 'completed')
+
+    const completedResponses = prompt.responses.filter((r) => r.status === 'completed')
+    const hasCompleted = completedResponses.length > 0
     if (!hasCompleted) {
       return NextResponse.json({ summary: null })
     }
-    if (prompt.summary) {
-      return NextResponse.json({ summary: { content: prompt.summary.content } })
+
+    const completedCount = completedResponses.length
+
+    if (prompt.summary && prompt.summary.stances) {
+      const storedStances = prompt.summary.stances as any
+      if (storedStances && typeof storedStances === 'object' && !Array.isArray(storedStances)) {
+        const storedCount = Object.keys(storedStances as Record<string, string>).length
+        if (storedCount >= completedCount && prompt.summary.content.trim().length > 0) {
+          return NextResponse.json({
+            summary: {
+              content: prompt.summary.content,
+              stances: storedStances as Record<string, string>,
+            },
+          })
+        }
+      }
     }
-    await generateSummaryAndViewpoints(id)
-    const updated = await prisma.prompt.findUnique({
-      where: { id },
-      include: { summary: true },
-    })
+
+    const preload = {
+      prompt: { id: prompt.id, content: prompt.content, conversationId: prompt.conversationId },
+      responses: completedResponses.map((r) => ({
+        id: r.id,
+        modelId: r.modelId,
+        modelName: r.modelName,
+        content: r.content,
+      })),
+    }
+
+    const result = await generateSummaryAndStances(id, preload)
+
     return NextResponse.json({
-      summary: updated?.summary ? { content: updated.summary.content } : null,
+      summary: {
+        content: result.summaryText,
+        stances: result.stancesByModelId,
+      },
     })
   } catch (error) {
     console.error('Error ensuring summary:', error)

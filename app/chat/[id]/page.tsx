@@ -36,7 +36,12 @@ export default async function ConversationPage({
       success: r.status === 'completed',
       error: r.error ?? undefined,
     })),
-    summary: p.summary ? { content: p.summary.content } : null,
+    summary: p.summary
+      ? {
+          content: p.summary.content,
+          stances: (p.summary as any).stances ?? undefined,
+        }
+      : null,
   }))
 
   return (
