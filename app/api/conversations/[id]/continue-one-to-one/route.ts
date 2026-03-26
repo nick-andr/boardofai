@@ -70,10 +70,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const modelConfig = enabledModels.find((m) => m.id === modelId)
     const modelName = modelConfig?.name ?? modelId
 
+    const parentSummary = parent.summary ?? null
+
     const child = await prisma.conversation.create({
       data: {
         parentId: parent.id,
         modelId,
+        summary: parentSummary,
         title:
           `${modelName} · ` +
           (parent.title ||

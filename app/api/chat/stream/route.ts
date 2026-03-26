@@ -37,13 +37,20 @@ export async function POST(request: NextRequest) {
           ? body.conversationId.trim()
           : null
 
+        let boundModelId: string | null = null
+
         if (incomingId) {
           const existing = await prisma.conversation.findUnique({
             where: { id: incomingId },
           })
           if (existing) {
             conversationIdFinal = existing.id
-            if (existing.parentId != null) isChildConversation = true
+            if (existing.parentId != null) {
+              isChildConversation = true
+              if (existing.modelId) {
+                boundModelId = existing.modelId
+              }
+            }
             // Load canonical model set and disabled models for this conversation
             if (existing.modelIds) {
               try {
@@ -79,34 +86,50 @@ export async function POST(request: NextRequest) {
         }
 
         // Resolve canonical model ids for this conversation.
-        // 1) If baseModelIds was already stored on the conversation, use it.
-        // 2) Otherwise, derive from client selection / defaults once and persist.
+        // For 1:1 child conversations with a bound model, always use that single model.
+        // For board conversations:
+        //   1) If baseModelIds was already stored on the conversation, use it.
+        //   2) Otherwise, derive from client selection / defaults once and persist.
         let selectedModelsForTurn: typeof enabledModels
-        if (!baseModelIds) {
-          // Use selectedModelIds from client when provided; otherwise first N from default order
-          if (Array.isArray(selectedModelIds) && selectedModelIds.length > 0) {
-            selectedModelsForTurn = getModelsByIds(selectedModelIds)
-          } else {
-            selectedModelsForTurn = enabledModels.slice(0, count)
-          }
-          if (selectedModelsForTurn.length === 0) {
-            send({ type: 'error', message: 'At least one model must be selected' })
+        if (boundModelId) {
+          const model = enabledModels.find((m) => m.id === boundModelId)
+          if (!model) {
+            send({
+              type: 'error',
+              message: `Bound model ${boundModelId} is not enabled`,
+            })
             controller.close()
             return
           }
-          baseModelIds = selectedModelsForTurn.map((m) => m.id)
-          // Persist canonical model set for this conversation
-          await prisma.conversation.update({
-            where: { id: conversationIdFinal },
-            data: { modelIds: JSON.stringify(baseModelIds) },
-          })
-        }
+          selectedModelsForTurn = [model]
+          baseModelIds = [boundModelId]
+        } else {
+          if (!baseModelIds) {
+            // Use selectedModelIds from client when provided; otherwise first N from default order
+            if (Array.isArray(selectedModelIds) && selectedModelIds.length > 0) {
+              selectedModelsForTurn = getModelsByIds(selectedModelIds)
+            } else {
+              selectedModelsForTurn = enabledModels.slice(0, count)
+            }
+            if (selectedModelsForTurn.length === 0) {
+              send({ type: 'error', message: 'At least one model must be selected' })
+              controller.close()
+              return
+            }
+            baseModelIds = selectedModelsForTurn.map((m) => m.id)
+            // Persist canonical model set for this conversation
+            await prisma.conversation.update({
+              where: { id: conversationIdFinal },
+              data: { modelIds: JSON.stringify(baseModelIds) },
+            })
+          }
 
-        // Apply per-conversation disabled models: silently drop them for this and future turns.
-        const effectiveModelIds = (baseModelIds || []).filter(
-          (id) => !disabledModelIds.includes(id)
-        )
-        selectedModelsForTurn = getModelsByIds(effectiveModelIds)
+          // Apply per-conversation disabled models: silently drop them for this and future turns.
+          const effectiveModelIds = (baseModelIds || []).filter(
+            (id) => !disabledModelIds.includes(id)
+          )
+          selectedModelsForTurn = getModelsByIds(effectiveModelIds)
+        }
         if (selectedModelsForTurn.length === 0) {
           send({
             type: 'error',

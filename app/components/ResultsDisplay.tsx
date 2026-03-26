@@ -23,6 +23,8 @@ interface Props {
   alwaysExpanded?: boolean
   /** When true: hide summary section (child thread or single-model board). */
   compactMode?: boolean
+  /** When true: hide the "Responses" title (e.g. child/1:1 thread). */
+  hideTitle?: boolean
 }
 
 export default function ResultsDisplay({
@@ -33,6 +35,7 @@ export default function ResultsDisplay({
   talkOneToOneHandlersByModelId,
   alwaysExpanded = false,
   compactMode = false,
+  hideTitle = false,
 }: Props) {
   return (
     <div className="space-y-6 w-full">
@@ -53,9 +56,11 @@ export default function ResultsDisplay({
 
       {/* Individual model responses - left-aligned, full width */}
       <div className="space-y-4 w-full">
-        <h3 className="text-xl font-bold text-gray-900 mb-4">
-          Responses
-        </h3>
+        {!hideTitle && (
+          <h3 className="text-xl font-bold text-gray-900 mb-4">
+            Responses
+          </h3>
+        )}
         {responses.map((response, index) => (
           <ModelResponse
             key={response.modelId ?? index}

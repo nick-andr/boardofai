@@ -67,6 +67,22 @@ function mapModelNamesToIds(responses: LoadedResponse[]) {
   return { nameToId, defaultNameToId }
 }
 
+const MAX_WORDS_PER_RESPONSE = 350
+
+function buildAnonymizedResponsesText(responses: LoadedResponse[]): string {
+  return responses
+    .map((r, i) => {
+      const text = r.content.trim()
+      const words = text.split(/\s+/)
+      const truncated =
+        words.length > MAX_WORDS_PER_RESPONSE
+          ? words.slice(0, MAX_WORDS_PER_RESPONSE).join(' ') + '…'
+          : text
+      return `Answer ${i + 1}:\n${truncated}`
+    })
+    .join('\n\n')
+}
+
 function parsePanelVoteAndSummary(
   raw: string,
   responses: LoadedResponse[]
@@ -268,7 +284,11 @@ SUMMARY:
     })
 
     try {
-      await updateConversationSummary(prompt.conversationId, prompt.content, saved.content)
+      await updateConversationSummary(
+        prompt.conversationId,
+        prompt.content,
+        buildAnonymizedResponsesText(responses)
+      )
     } catch (e) {
       console.error('Failed to update conversation summary:', e)
     }

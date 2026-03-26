@@ -197,7 +197,12 @@ export default function ChatInterface({
     e.preventDefault()
     if (!prompt.trim()) return
 
-    const selectedModelIds = models.filter((m) => selectedIds.has(m.id)).map((m) => m.id)
+    // Determine which models to display as "active" for this turn.
+    // For 1:1 child conversations, always use the bound model id.
+    const selectedModelIds =
+      boundModelId != null
+        ? [boundModelId]
+        : models.filter((m) => selectedIds.has(m.id)).map((m) => m.id)
     if (selectedModelIds.length === 0) return
 
     const userPrompt = prompt.trim()
@@ -205,7 +210,14 @@ export default function ChatInterface({
     setIsSubmitting(true)
     scrollOnNextRenderRef.current = true
     setTurns((prev) => [...prev, { prompt: userPrompt, responses: [], summary: null }])
-    const selected = models.filter((m) => selectedIds.has(m.id)).map((m) => ({ id: m.id, name: m.name }))
+    const selected =
+      boundModelId != null
+        ? models
+            .filter((m) => m.id === boundModelId)
+            .map((m) => ({ id: m.id, name: m.name }))
+        : models
+            .filter((m) => selectedIds.has(m.id))
+            .map((m) => ({ id: m.id, name: m.name }))
     setWaitingForModels(selected)
 
     try {
@@ -246,6 +258,10 @@ export default function ChatInterface({
             if (data.type === 'conversation' && data.conversationId) {
               setConversationId(data.conversationId)
               conversationIdRef.current = data.conversationId
+            } else if (data.type === 'models_started' && Array.isArray(data.models)) {
+              setWaitingForModels(
+                data.models.map((m: { id: string; name: string }) => ({ id: m.id, name: m.name }))
+              )
             } else if (data.type === 'prompt' && data.promptId) {
               setTurns((prev) => {
                 const next = [...prev]
@@ -457,6 +473,7 @@ export default function ChatInterface({
                     return (
                       <ResultsDisplay
                         responses={turn.responses}
+                        hideTitle={!!boundModelId}
                         summary={turn.summary}
                         summaryLoading={
                           !compactMode &&
